@@ -2251,10 +2251,11 @@ bool ClientSDKUE4::writeEntityModuleEnd(ScriptDefModule* pEntityScriptDefModule)
 			if (pPropertyDescription->getDataType()->type() != DATA_TYPE_ENTITY_COMPONENT)
 				continue;
 
-			//EntityComponentType * pEntityComponentType = (EntityComponentType*)pPropertyDescription->getDataType();
+			EntityComponentType * pEntityComponentType = (EntityComponentType*)pPropertyDescription->getDataType();
 			fileBody() += fmt::format("\t{}->pOwner = this;\n", pPropertyDescription->getName());
 			fileBody() += fmt::format("\t{}->ownerID = id_;\n", pPropertyDescription->getName());
-			fileBody() += fmt::format("\t{}->entityComponentPropertyID = {};\n\n", pPropertyDescription->getName(), pPropertyDescription->getUType());
+			fileBody() += fmt::format("\t{}->entityComponentPropertyID = {};\n", pPropertyDescription->getName(), pPropertyDescription->getUType());
+			fileBody() += fmt::format("\t{}->name_ = \"{}\";\n\n", pPropertyDescription->getName(), pEntityComponentType->pScriptDefModule()->getName());
 		}
 	}
 
@@ -2335,6 +2336,42 @@ bool ClientSDKUE4::writeEntityModuleEnd(ScriptDefModule* pEntityScriptDefModule)
 		fileBody() += fmt::format("}}\n");
 	}
 
+	std::vector<PropertyDescription*> components;
+
+	ScriptDefModule::PROPERTYDESCRIPTION_MAP clientPropertys = pEntityScriptDefModule->getClientPropertyDescriptions();
+	ScriptDefModule::PROPERTYDESCRIPTION_MAP::const_iterator propIter = clientPropertys.begin();
+	for (; propIter != clientPropertys.end(); ++propIter)
+	{
+		PropertyDescription* pPropertyDescription = propIter->second;
+
+		if (pPropertyDescription->getDataType()->type() == DATA_TYPE_ENTITY_COMPONENT)
+			components.push_back(pPropertyDescription);
+	}
+
+	if (!components.empty())
+	{
+		changeContextToHeader();
+		fileBody() += fmt::format("\tTArray<EntityComponent*> getComponents(FString componentName, bool all) override;\n");
+
+		changeContextToSource();
+		fileBody() += fmt::format("\nTArray<EntityComponent*> {}::getComponents(FString componentName, bool all)\n{{\n", newModuleName);
+	
+		fileBody() += fmt::format("\tTArray<EntityComponent*> founds;\n\n");
+
+		std::vector<PropertyDescription*>::const_iterator iter = components.begin();
+		for (; iter != components.end(); ++iter)
+		{
+			PropertyDescription* pPropertyDescription = *iter;
+			fileBody() += fmt::format("\tif({}->name_ == componentName)\n\t{{\n", pPropertyDescription->getName());
+			fileBody() += fmt::format("\t\tfounds.Add({});\n", pPropertyDescription->getName());
+			fileBody() += fmt::format("\t\tif(!all)\n");
+			fileBody() += fmt::format("\t\t\treturn founds;\n\t}}\n\n");
+		}
+
+		fileBody() += "\treturn founds;\n";
+		fileBody() += "}\n";
+	}
+
 	fileBody() += namespaceNameEnd;
 
 	changeContextToHeader();
@@ -2363,9 +2400,36 @@ bool ClientSDKUE4::writeEntityProcessMessagesMethod(ScriptDefModule* pEntityScri
 		changeContextToSource();
 		fileBody() += fmt::format("\nvoid {}::createFromStream(MemoryStream& stream)\n{{\n", newModuleName);
 		fileBody() += fmt::format("\tEntityComponent::createFromStream(stream);\n");
-		fileBody() += fmt::format("\tpBaseEntityCall = new EntityBaseEntityCall_{}(entityComponentPropertyID, ownerID);\n", newModuleName);
-		fileBody() += fmt::format("\tpCellEntityCall = new EntityCellEntityCall_{}(entityComponentPropertyID, ownerID);\n", newModuleName);
 		fileBody() += fmt::format("}}\n");
+
+		changeContextToHeader();
+		fileBody() += fmt::format("\n\tvoid onGetBase() override;\n");
+
+		changeContextToSource();
+		fileBody() += fmt::format("\nvoid {}::onGetBase()\n{{\n", newModuleName);
+		fileBody() += fmt::format("\tif(pBaseEntityCall)\n");
+		fileBody() += fmt::format("\t\tdelete pBaseEntityCall;\n\n");
+		fileBody() += fmt::format("\tpBaseEntityCall = new EntityBaseEntityCall_{}(entityComponentPropertyID, ownerID);\n", newModuleName);
+		fileBody() += "}\n\n";
+
+		changeContextToHeader();
+		fileBody() += fmt::format("\tvoid onGetCell() override;\n");
+
+		changeContextToSource();
+		fileBody() += fmt::format("void {}::onGetCell()\n{{\n", newModuleName);
+		fileBody() += fmt::format("\tif(pCellEntityCall)\n");
+		fileBody() += fmt::format("\t\tdelete pCellEntityCall;\n\n");
+		fileBody() += fmt::format("\tpCellEntityCall = new EntityCellEntityCall_{}(entityComponentPropertyID, ownerID);\n", newModuleName);
+		fileBody() += "}\n";
+
+		changeContextToHeader();
+		fileBody() += fmt::format("\tvoid onLoseCell() override;\n");
+
+		changeContextToSource();
+		fileBody() += fmt::format("\nvoid {}::onLoseCell()\n{{\n", newModuleName);
+		fileBody() += fmt::format("\tdelete pCellEntityCall;\n");
+		fileBody() += fmt::format("\tpCellEntityCall = NULL;\n");
+		fileBody() += "}\n\n";
 	}
 
 	if (pEntityScriptDefModule->isComponentModule())
@@ -2398,6 +2462,7 @@ bool ClientSDKUE4::writeEntityProcessMessagesMethod(ScriptDefModule* pEntityScri
 
 			fileBody() += fmt::format("}}\n");
 		}
+
 		{
 			changeContextToHeader();
 			fileBody() += fmt::format("\tvoid onComponentsLeaveworld() override;\n");
@@ -2420,34 +2485,80 @@ bool ClientSDKUE4::writeEntityProcessMessagesMethod(ScriptDefModule* pEntityScri
 			fileBody() += fmt::format("}}\n");
 		}
 
-		changeContextToHeader();
-		fileBody() += fmt::format("\n\tvoid onGetBase() override;\n");
+		{
+			changeContextToHeader();
+			fileBody() += fmt::format("\n\tvoid onGetBase() override;\n");
 
-		changeContextToSource();
-		fileBody() += fmt::format("\nvoid {}::onGetBase()\n{{\n", newModuleName);
-		fileBody() += fmt::format("\tif(pBaseEntityCall)\n");
-		fileBody() += fmt::format("\t\tdelete pBaseEntityCall;\n\n");
-		fileBody() += fmt::format("\tpBaseEntityCall = new EntityBaseEntityCall_{}(id(), className());\n", newModuleName);
-		fileBody() += "}\n\n";
+			changeContextToSource();
+			fileBody() += fmt::format("\nvoid {}::onGetBase()\n{{\n", newModuleName);
+			fileBody() += fmt::format("\tif(pBaseEntityCall)\n");
+			fileBody() += fmt::format("\t\tdelete pBaseEntityCall;\n\n");
+			fileBody() += fmt::format("\tpBaseEntityCall = new EntityBaseEntityCall_{}(id(), className());\n", newModuleName);
 
-		changeContextToHeader();
-		fileBody() += fmt::format("\tvoid onGetCell() override;\n");
+			ScriptDefModule::PROPERTYDESCRIPTION_MAP clientPropertys = pEntityScriptDefModule->getClientPropertyDescriptions();
+			ScriptDefModule::PROPERTYDESCRIPTION_MAP::const_iterator propIter = clientPropertys.begin();
+			for (; propIter != clientPropertys.end(); ++propIter)
+			{
+				PropertyDescription* pPropertyDescription = propIter->second;
 
-		changeContextToSource();
-		fileBody() += fmt::format("void {}::onGetCell()\n{{\n", newModuleName);
-		fileBody() += fmt::format("\tif(pCellEntityCall)\n");
-		fileBody() += fmt::format("\t\tdelete pCellEntityCall;\n\n");
-		fileBody() += fmt::format("\tpCellEntityCall = new EntityCellEntityCall_{}(id(), className());\n", newModuleName);
-		fileBody() += "}\n";
+				if (pPropertyDescription->getDataType()->type() != DATA_TYPE_ENTITY_COMPONENT)
+					continue;
 
-		changeContextToHeader();
-		fileBody() += fmt::format("\tvoid onLoseCell() override;\n\n");
+				fileBody() += fmt::format("\t{}->onGetBase();\n", pPropertyDescription->getName());
+			}
 
-		changeContextToSource();
-		fileBody() += fmt::format("\nvoid {}::onLoseCell()\n{{\n", newModuleName);
-		fileBody() += fmt::format("\tdelete pCellEntityCall;\n");
-		fileBody() += fmt::format("\tpCellEntityCall = NULL;\n");
-		fileBody() += "}\n\n";
+			fileBody() += fmt::format("}}\n");
+		}
+
+		{
+			changeContextToHeader();
+			fileBody() += fmt::format("\tvoid onGetCell() override;\n");
+
+			changeContextToSource();
+			fileBody() += fmt::format("\nvoid {}::onGetCell()\n{{\n", newModuleName);
+			fileBody() += fmt::format("\tif(pCellEntityCall)\n");
+			fileBody() += fmt::format("\t\tdelete pCellEntityCall;\n\n");
+			fileBody() += fmt::format("\tpCellEntityCall = new EntityCellEntityCall_{}(id(), className());\n", newModuleName);
+
+
+			ScriptDefModule::PROPERTYDESCRIPTION_MAP clientPropertys = pEntityScriptDefModule->getClientPropertyDescriptions();
+			ScriptDefModule::PROPERTYDESCRIPTION_MAP::const_iterator propIter = clientPropertys.begin();
+			for (; propIter != clientPropertys.end(); ++propIter)
+			{
+				PropertyDescription* pPropertyDescription = propIter->second;
+
+				if (pPropertyDescription->getDataType()->type() != DATA_TYPE_ENTITY_COMPONENT)
+					continue;
+
+				fileBody() += fmt::format("\t{}->onGetCell();\n", pPropertyDescription->getName());
+			}
+
+			fileBody() += "}\n";
+		}
+
+		{
+			changeContextToHeader();
+			fileBody() += fmt::format("\tvoid onLoseCell() override;\n\n");
+
+			changeContextToSource();
+			fileBody() += fmt::format("\nvoid {}::onLoseCell()\n{{\n", newModuleName);
+			fileBody() += fmt::format("\tdelete pCellEntityCall;\n");
+			fileBody() += fmt::format("\tpCellEntityCall = NULL;\n");
+
+			ScriptDefModule::PROPERTYDESCRIPTION_MAP clientPropertys = pEntityScriptDefModule->getClientPropertyDescriptions();
+			ScriptDefModule::PROPERTYDESCRIPTION_MAP::const_iterator propIter = clientPropertys.begin();
+			for (; propIter != clientPropertys.end(); ++propIter)
+			{
+				PropertyDescription* pPropertyDescription = propIter->second;
+
+				if (pPropertyDescription->getDataType()->type() != DATA_TYPE_ENTITY_COMPONENT)
+					continue;
+
+				fileBody() += fmt::format("\t{}->onLoseCell();\n", pPropertyDescription->getName());
+			}
+
+			fileBody() += "}\n\n";
+		}
 
 		changeContextToHeader();
 		fileBody() += fmt::format("\tEntityCall* getBaseEntityCall() override;\n");

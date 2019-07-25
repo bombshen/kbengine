@@ -105,6 +105,7 @@ class Proxy : public script::ScriptObject
 public:
 	Proxy(PyTypeObject* pyType = getScriptType(), bool isInitialised = true) :
 		ScriptObject(pyType, isInitialised) {}
+
 	~Proxy() {}
 };
 
@@ -125,6 +126,7 @@ class EntityComponent : public script::ScriptObject
 public:
 	EntityComponent(PyTypeObject* pyType = getScriptType(), bool isInitialised = true) :
 		ScriptObject(pyType, isInitialised) {}
+
 	~EntityComponent() {}
 };
 
@@ -544,7 +546,7 @@ static bool registerDefContext(DefContext& defContext)
 	{
 		if (!EntityDef::validDefPropertyName(defContext.attrName))
 		{
-			PyErr_Format(PyExc_AssertionError, "EntityDef.%s: '%s.%s' is limited!\n\n",
+			PyErr_Format(PyExc_AssertionError, "EntityDef.%s: '%s.%s' is limited!\n\n", 
 				defContext.optionName.c_str(), name.c_str(), defContext.attrName.c_str());
 
 			return false;
@@ -1072,7 +1074,9 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 			const_cast<char*>("(O)"), Py_None);
 
 		if (!pyRet)
-			return NULL;
+		{
+			PY_RETURN_ERROR;
+		}
 
 		if (pyRet != Py_None)
 		{
@@ -1081,23 +1085,6 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 
 			defContext.propertyDefaultVal = PyUnicode_AsUTF8AndSize(pyStrResult, NULL);
 			Py_DECREF(pyStrResult);
-
-			// 验证这个字符串是否可以还原成对象
-			if (defContext.propertyDefaultVal.size() > 0)
-			{
-				PyObject* module = PyImport_AddModule("__main__");
-				if (module == NULL)
-					return NULL;
-
-				PyObject* mdict = PyModule_GetDict(module); // Borrowed reference.
-				PyObject* result = PyRun_String(const_cast<char*>(defContext.propertyDefaultVal.c_str()),
-					Py_eval_input, mdict, mdict);
-
-				if (result == NULL)
-					return NULL;
-
-				Py_DECREF(result);
-			}
 		}
 		else
 		{
@@ -1479,6 +1466,30 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 	}
 	else if (defContext.optionName == "property")
 	{
+		// 验证这个字符串是否可以还原成对象
+		if (defContext.propertyDefaultVal.size() > 0)
+		{
+			PyObject* module = PyImport_AddModule("__main__");
+			if (module == NULL)
+			{
+				noerror = false;
+			}
+			else
+			{
+				if (defContext.returnType != "UNICODE" && defContext.returnType != "STRING")
+				{
+					PyObject* mdict = PyModule_GetDict(module); // Borrowed reference.
+					PyObject* result = PyRun_String(const_cast<char*>(defContext.propertyDefaultVal.c_str()),
+						Py_eval_input, mdict, mdict);
+
+					if (result == NULL)
+						noerror = false;
+					else
+						Py_DECREF(result);
+				}
+			}
+		}
+
 		noerror = onDefProperty(defContext);
 	}
 	else if (defContext.optionName == "entity")
@@ -2015,6 +2026,18 @@ static bool execPython(COMPONENT_TYPE componentType)
 		}
 	}
 
+	// 重定向python输出
+	ScriptStdOutErr* pyStdouterr = new ScriptStdOutErr();
+
+	// 安装py重定向脚本模块
+	if (!pyStdouterr->install()) 
+	{
+		ERROR_MSG("PyEntityDef::execPython(): pyStdouterr->install() is failed!\n");
+		delete pyStdouterr;
+		SCRIPT_ERROR_CHECK();
+		return false;
+	}
+
 	PyObject *m = PyImport_AddModule("__main__");
 
 	// 添加一个脚本基础模块
@@ -2058,6 +2081,15 @@ static bool execPython(COMPONENT_TYPE componentType)
 
 	if (componentType == BASEAPP_TYPE)
 		Proxy::unregisterScript();
+
+	if (pyStdouterr)
+	{
+		if (pyStdouterr->isInstall() && !pyStdouterr->uninstall()) {
+			ERROR_MSG("PyEntityDef::execPython(): pyStdouterr->uninstall() is failed!\n");
+		}
+
+		delete pyStdouterr;
+	}
 
 	if (pNewInterpreter != PyThreadState_Swap(pCurInterpreter))
 	{
@@ -2291,7 +2323,7 @@ static bool registerDefMethods(ScriptDefModule* pScriptModule, DefContext& defCo
 
 		size_t argIdx = 0;
 
-		// 检查第一个参数是否是exposed callerID
+		// 检查第一个参数是否是Exposed callerID
 		if (defMethodContext.argsvecs.size() > 0)
 		{
 			std::string argName = defMethodContext.argsvecs[0];
