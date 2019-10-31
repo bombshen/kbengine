@@ -848,7 +848,10 @@ Request::Status Requests::perform(const std::string& url, const Request::Callbac
 	if (headers.size() > 0)
 		r->setHeader(headers);
 
-	return perform(r);
+	Request::Status status = perform(r);
+	// 由curl的回调中销毁
+	// delete r;
+	return status;
 }
 
 //-------------------------------------------------------------------------------------
@@ -863,7 +866,10 @@ Request::Status Requests::perform(const std::string& url, const Request::Callbac
 	if (headers.size() > 0)
 		r->setHeader(headers);
 
-	return perform(r);
+	Request::Status status = perform(r);
+	// 由curl的回调中销毁
+	// delete r;
+	return status;
 }
 
 //-------------------------------------------------------------------------------------
